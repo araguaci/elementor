@@ -1,11 +1,29 @@
 import ContainerHelper from 'elementor-editor-utils/container-helper';
+import environment from 'elementor-common/utils/environment';
 
-class AddSectionBase extends Marionette.ItemView {
+/**
+ * @typedef {import('../../container/container')} Container
+ */
+ class AddSectionBase extends Marionette.ItemView {
 	static IS_CONTAINER_ACTIVE = ! ! elementorCommon.config.experimentalFeatures.container;
+	static IS_CONTAINER_GRID_ACTIVE = ! ! elementorCommon.config.experimentalFeatures.container_grid;
 
 	// Views.
 	static VIEW_CHOOSE_ACTION = 'choose-action';
-	static VIEW_SELECT_PRESET = ( AddSectionBase.IS_CONTAINER_ACTIVE ) ? 'select-container-preset' : 'select-preset';
+	static VIEW_CONTAINER_FLEX_PRESET = 'select-container-preset';
+	static VIEW_CONTAINER_GRID_PRESET = 'select-container-preset-grid';
+
+	static getSelectType() {
+		return AddSectionBase.IS_CONTAINER_ACTIVE
+			? AddSectionBase.getSelectTypePreset()
+			: 'select-preset';
+	}
+
+	static getSelectTypePreset() {
+		return AddSectionBase.IS_CONTAINER_GRID_ACTIVE
+			? 'select-type'
+			: 'select-container-preset';
+	}
 
 	template() {
 		return Marionette.TemplateCache.get( '#tmpl-elementor-add-section' );
@@ -21,11 +39,15 @@ class AddSectionBase extends Marionette.ItemView {
 		return {
 			addNewSection: '.elementor-add-new-section',
 			closeButton: '.elementor-add-section-close',
+			backButton: '.elementor-add-section-back',
 			addSectionButton: '.elementor-add-section-button',
 			addTemplateButton: '.elementor-add-template-button',
 			selectPreset: '.elementor-select-preset',
 			presets: '.elementor-preset',
-			containerPresets: '.e-container-preset',
+			containerPresets: '.e-con-preset',
+			flexPresetButton: '.flex-preset-button',
+			gridPresetButton: '.grid-preset-button',
+			chooseGridPreset: '.e-con-choose-grid-preset',
 		};
 	}
 
@@ -34,8 +56,12 @@ class AddSectionBase extends Marionette.ItemView {
 			'click @ui.addSectionButton': 'onAddSectionButtonClick',
 			'click @ui.addTemplateButton': 'onAddTemplateButtonClick',
 			'click @ui.closeButton': 'onCloseButtonClick',
+			'click @ui.backButton': () => this.setView( AddSectionBase.getSelectType() ),
 			'click @ui.presets': 'onPresetSelected',
 			'click @ui.containerPresets': 'onContainerPresetSelected',
+			'click @ui.flexPresetButton': () => this.setView( AddSectionBase.VIEW_CONTAINER_FLEX_PRESET ),
+			'click @ui.gridPresetButton': () => this.setView( AddSectionBase.VIEW_CONTAINER_GRID_PRESET ),
+			'click @ui.chooseGridPreset': 'onGridPresetSelected',
 		};
 	}
 
@@ -44,6 +70,7 @@ class AddSectionBase extends Marionette.ItemView {
 			contextMenu: {
 				behaviorClass: require( 'elementor-behaviors/context-menu' ),
 				groups: this.getContextMenuGroups(),
+				eventTargets: [ '.elementor-add-section-inner' ],
 			},
 		};
 	}
@@ -57,7 +84,7 @@ class AddSectionBase extends Marionette.ItemView {
 	}
 
 	showSelectPresets() {
-		this.setView( AddSectionBase.VIEW_SELECT_PRESET );
+		this.setView( AddSectionBase.getSelectType() );
 	}
 
 	closeSelectPresets() {
@@ -77,6 +104,8 @@ class AddSectionBase extends Marionette.ItemView {
 			return elementor.elements.length > 0;
 		};
 
+		const controlSign = environment.mac ? '&#8984;' : '^';
+
 		return [
 			{
 				name: 'paste',
@@ -84,6 +113,7 @@ class AddSectionBase extends Marionette.ItemView {
 					{
 						name: 'paste',
 						title: __( 'Paste', 'elementor' ),
+						shortcut: controlSign + '+V',
 						isEnabled: () => $e.components.get( 'document/elements' ).utils.isPasteEnabled( elementor.getPreviewContainer() ),
 						callback: () => $e.run( 'document/ui/paste', {
 							container: elementor.getPreviewContainer(),
@@ -92,6 +122,17 @@ class AddSectionBase extends Marionette.ItemView {
 								rebuild: true,
 							},
 							onAfter: () => this.onAfterPaste(),
+						} ),
+					}, {
+						name: 'paste_area',
+						icon: 'eicon-import-export',
+						title: __( 'Paste from other site', 'elementor' ),
+						callback: () => $e.run( 'document/elements/paste-area', {
+							container: elementor.getPreviewContainer(),
+							options: {
+								at: this.getOption( 'at' ),
+								rebuild: true,
+							},
 						} ),
 					},
 				],
@@ -136,13 +177,50 @@ class AddSectionBase extends Marionette.ItemView {
 
 	getDroppableOptions() {
 		return {
+			isDroppingAllowed: ( ) => {
+				return ! elementor.channels.editor.request( 'element:dragged' )?.el?.dataset?.id;
+			},
 			onDropping: ( side, event ) => {
 				elementor.getPreviewView().onDrop(
 					event,
-					{ side, at: this.getOption( 'at' ) }
+					{ side, at: this.getOption( 'at' ) },
 				);
 			},
 		};
+	}
+
+	onGridPresetSelected( event ) {
+		this.closeSelectPresets();
+
+		const selectedStructure = event.currentTarget.dataset.structure,
+			parsedStructure = elementor.presetsFactory.getParsedGridStructure( selectedStructure ),
+			isAddedAboveAnotherContainer = !! this.options.at || 0 === this.options.at;
+
+		const newContainer = ContainerHelper.createContainer(
+			{
+				container_type: ContainerHelper.CONTAINER_TYPE_GRID,
+				grid_columns_grid: {
+					unit: 'fr',
+					size: parsedStructure.columns,
+				},
+				grid_rows_grid: {
+					unit: 'fr',
+					size: parsedStructure.rows,
+				},
+				grid_rows_grid_mobile: {
+					unit: 'fr',
+					size: parsedStructure.rows,
+				},
+			},
+			elementor.getPreviewContainer(),
+			this.options,
+		);
+
+		if ( isAddedAboveAnotherContainer ) {
+			this.destroy();
+		}
+
+		return newContainer;
 	}
 
 	onPresetSelected( event ) {
@@ -167,7 +245,7 @@ class AddSectionBase extends Marionette.ItemView {
 	 *
 	 * @param {MouseEvent} e - Click event.
 	 *
-	 * @return {Container}
+	 * @return {Container} container
 	 */
 	onContainerPresetSelected( e ) {
 		this.closeSelectPresets();
@@ -175,7 +253,7 @@ class AddSectionBase extends Marionette.ItemView {
 		return ContainerHelper.createContainerFromPreset(
 			e.currentTarget.dataset.preset,
 			elementor.getPreviewContainer(),
-			this.options
+			this.options,
 		);
 	}
 
